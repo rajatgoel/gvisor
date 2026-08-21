@@ -195,6 +195,19 @@ func NVProxyDriverCapsAllowed(conf *config.Config) (nvconf.DriverCaps, error) {
 	return allowedDriverCaps, nil
 }
 
+// NVProxyProfilingAllowed returns true if nvproxy is enabled and the profiling
+// driver capability is among those the container requested.
+func NVProxyProfilingAllowed(spec *specs.Spec, conf *config.Config) bool {
+	if !NVProxyEnabled(spec, conf) {
+		return false
+	}
+	driverCaps, err := NVProxyDriverCapsFromEnv(spec, conf)
+	if err != nil {
+		return false
+	}
+	return driverCaps&nvconf.CapProfiling != 0
+}
+
 // NVProxyDriverCapsFromEnv returns the driver capabilities requested by the
 // application via the NVIDIA_DRIVER_CAPABILITIES env var. See
 // nvidia-container-toolkit/cmd/nvidia-container-runtime-hook/container_config.go:getDriverCapabilities().
