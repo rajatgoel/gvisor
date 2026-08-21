@@ -2083,6 +2083,11 @@ func modifySpecForDirectfs(conf *config.Config, spec *specs.Spec) error {
 		// namespace, in which the network namespace is configured.
 		return nil
 	}
+	if specutils.NVProxyProfilingAllowed(spec, conf) {
+		// GPU performance counter access requires the sentry to hold CAP_PERFMON in
+		// the initial user namespace, which a new userns would not satisfy.
+		return nil
+	}
 	if _, ok := specutils.GetNS(specs.UserNamespace, spec); ok {
 		// If the spec already defines a userns, use that.
 		return nil

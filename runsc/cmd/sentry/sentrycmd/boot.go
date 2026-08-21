@@ -74,6 +74,18 @@ var (
 		Permitted: directfsSandboxCaps,
 	}
 
+	// nvproxyProfilingSandboxCaps is what the sentry needs to satisfy the NVIDIA
+	// driver's RS_ACCESS_PERFMON check on the sandbox's behalf.
+	nvproxyProfilingSandboxCaps = []string{
+		"CAP_PERFMON",
+	}
+
+	nvproxyProfilingSandboxLinuxCaps = &specs.LinuxCapabilities{
+		Bounding:  nvproxyProfilingSandboxCaps,
+		Effective: nvproxyProfilingSandboxCaps,
+		Permitted: nvproxyProfilingSandboxCaps,
+	}
+
 	hostnetSandboxLinuxCaps = map[capability.Cap]string{
 		capability.CAP_NET_ADMIN:        "CAP_NET_ADMIN",
 		capability.CAP_NET_BIND_SERVICE: "CAP_NET_BIND_SERVICE",
@@ -497,6 +509,9 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 
 		if conf.DirectFS {
 			caps = specutils.MergeCapabilities(caps, DirectfsSandboxLinuxCaps)
+		}
+		if specutils.NVProxyProfilingAllowed(spec, conf) {
+			caps = specutils.MergeCapabilities(caps, nvproxyProfilingSandboxLinuxCaps)
 		}
 		if conf.Network == config.NetworkHost {
 			curCaps, err := capability.NewPid2(0)

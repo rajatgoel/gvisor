@@ -314,6 +314,8 @@ func Init() {
 					nvgpu.NV2080_CTRL_CMD_NVLINK_GET_NVLINK_CAPS:                           ctrlHandler(rmControlSimple, compUtil),
 					nvgpu.NV2080_CTRL_CMD_NVLINK_GET_NVLINK_STATUS:                         ctrlHandler(rmControlSimple, compUtil),
 					nvgpu.NV2080_CTRL_CMD_PERF_BOOST:                                       ctrlHandler(rmControlSimple, compUtil),
+					nvgpu.NV2080_CTRL_CMD_PERF_RATED_TDP_GET_CONTROL:                       ctrlHandler(rmControlSimple, nvconf.CapProfiling),
+					nvgpu.NV2080_CTRL_CMD_PERF_RATED_TDP_SET_CONTROL:                       ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2:          ctrlHandler(rmControlSimple, compUtil),
 					nvgpu.NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO:                             ctrlHandler(rmControlSimple, compUtil),
 					nvgpu.NV2080_CTRL_CMD_RC_RELEASE_WATCHDOG_REQUESTS:                     ctrlHandler(rmControlSimple, compUtil),
@@ -355,6 +357,7 @@ func Init() {
 					nvgpu.NVB0CC_CTRL_CMD_RESERVE_PM_AREA_PC_SAMPLER:                       ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NVB0CC_CTRL_CMD_RELEASE_PM_AREA_PC_SAMPLER:                       ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NVB0CC_CTRL_CMD_GET_TOTAL_HS_CREDITS:                             ctrlHandler(rmControlSimple, nvconf.CapProfiling),
+					nvgpu.NVB0CC_CTRL_CMD_RESERVE_HES:                                      ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NVB0CC_CTRL_CMD_SET_HS_CREDITS:                                   ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NVB0CC_CTRL_CMD_POWER_REQUEST_FEATURES:                           ctrlHandler(rmControlSimple, nvconf.CapProfiling),
 					nvgpu.NVB0CC_CTRL_CMD_POWER_RELEASE_FEATURES:                           ctrlHandler(rmControlSimple, nvconf.CapProfiling),
@@ -635,6 +638,8 @@ func Init() {
 							nvgpu.NV2080_CTRL_CMD_NVLINK_GET_NVLINK_CAPS:                           simpleIoctlInfo("NV2080_CTRL_CMD_NVLINK_GET_NVLINK_CAPS", "NV2080_CTRL_CMD_NVLINK_GET_NVLINK_CAPS_PARAMS"),
 							nvgpu.NV2080_CTRL_CMD_NVLINK_GET_NVLINK_STATUS:                         simpleIoctlInfo("NV2080_CTRL_CMD_NVLINK_GET_NVLINK_STATUS", "NV2080_CTRL_CMD_NVLINK_GET_NVLINK_STATUS_PARAMS"),
 							nvgpu.NV2080_CTRL_CMD_PERF_BOOST:                                       simpleIoctlInfo("NV2080_CTRL_CMD_PERF_BOOST", "NV2080_CTRL_PERF_BOOST_PARAMS"),
+							nvgpu.NV2080_CTRL_CMD_PERF_RATED_TDP_GET_CONTROL:                       simpleIoctlInfo("NV2080_CTRL_CMD_PERF_RATED_TDP_GET_CONTROL", "NV2080_CTRL_PERF_RATED_TDP_CONTROL_PARAMS"),
+							nvgpu.NV2080_CTRL_CMD_PERF_RATED_TDP_SET_CONTROL:                       simpleIoctlInfo("NV2080_CTRL_CMD_PERF_RATED_TDP_SET_CONTROL", "NV2080_CTRL_PERF_RATED_TDP_CONTROL_PARAMS"),
 							nvgpu.NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2:          simpleIoctlInfo("NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2_PARAMS"),
 							nvgpu.NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO:                             simpleIoctlInfo("NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO", "NV2080_CTRL_RC_GET_WATCHDOG_INFO_PARAMS"),
 							nvgpu.NV2080_CTRL_CMD_RC_RELEASE_WATCHDOG_REQUESTS:                     simpleIoctlInfo("NV2080_CTRL_CMD_RC_RELEASE_WATCHDOG_REQUESTS"), // No params.
@@ -676,6 +681,7 @@ func Init() {
 							nvgpu.NVB0CC_CTRL_CMD_RESERVE_PM_AREA_PC_SAMPLER:                       simpleIoctlInfo("NVB0CC_CTRL_CMD_RESERVE_PM_AREA_PC_SAMPLER"), // No params.
 							nvgpu.NVB0CC_CTRL_CMD_RELEASE_PM_AREA_PC_SAMPLER:                       simpleIoctlInfo("NVB0CC_CTRL_CMD_RELEASE_PM_AREA_PC_SAMPLER"),
 							nvgpu.NVB0CC_CTRL_CMD_GET_TOTAL_HS_CREDITS:                             simpleIoctlInfo("NVB0CC_CTRL_CMD_GET_TOTAL_HS_CREDITS", "NVB0CC_CTRL_GET_TOTAL_HS_CREDITS_PARAMS"),
+							nvgpu.NVB0CC_CTRL_CMD_RESERVE_HES:                                      simpleIoctlInfo("NVB0CC_CTRL_CMD_RESERVE_HES", "NVB0CC_CTRL_RESERVE_HES_PARAMS"),
 							nvgpu.NVB0CC_CTRL_CMD_SET_HS_CREDITS:                                   simpleIoctlInfo("NVB0CC_CTRL_CMD_SET_HS_CREDITS", "NVB0CC_CTRL_SET_HS_CREDITS_PARAMS"),
 							nvgpu.NVB0CC_CTRL_CMD_POWER_REQUEST_FEATURES:                           simpleIoctlInfo("NVB0CC_CTRL_CMD_POWER_REQUEST_FEATURES", "NVB0CC_CTRL_POWER_REQUEST_FEATURES_PARAMS"),
 							nvgpu.NVB0CC_CTRL_CMD_POWER_RELEASE_FEATURES:                           simpleIoctlInfo("NVB0CC_CTRL_CMD_POWER_RELEASE_FEATURES", "NVB0CC_CTRL_POWER_RELEASE_FEATURES_PARAMS"),
@@ -974,6 +980,7 @@ func Init() {
 			abi.controlCmd[nvgpu.NV2080_CTRL_CMD_NVLINK_GET_PLATFORM_INFO] = ctrlHandler(rmControlSimple, nvconf.CapFabricIMEXManagement)
 			abi.controlCmd[nvgpu.NV2080_CTRL_CMD_BUS_GET_PCIE_CPL_ATOMICS_CAPS] = ctrlHandler(rmControlSimple, nvconf.CapGraphics)
 			abi.controlCmd[nvgpu.NVB0CC_CTRL_CMD_GET_CHIPLET_HS_CREDIT_POOL] = ctrlHandler(rmControlSimple, nvconf.CapProfiling)
+			abi.controlCmd[nvgpu.NVB0CC_CTRL_CMD_GET_HS_CREDITS_MAPPING] = ctrlHandler(rmControlSimple, nvconf.CapProfiling)
 			prevGetInfo := abi.getInfo
 			abi.getInfo = func() *DriverABIInfo {
 				info := prevGetInfo()
@@ -989,6 +996,7 @@ func Init() {
 				info.ControlInfos[nvgpu.NV2080_CTRL_CMD_NVLINK_GET_PLATFORM_INFO] = simpleIoctlInfo("NV2080_CTRL_CMD_NVLINK_GET_PLATFORM_INFO", "NV2080_CTRL_NVLINK_GET_PLATFORM_INFO_PARAMS")
 				info.ControlInfos[nvgpu.NV2080_CTRL_CMD_BUS_GET_PCIE_CPL_ATOMICS_CAPS] = simpleIoctlInfo("NV2080_CTRL_CMD_BUS_GET_PCIE_CPL_ATOMICS_CAPS", "NV2080_CTRL_CMD_BUS_GET_PCIE_CPL_ATOMICS_CAPS_PARAMS")
 				info.ControlInfos[nvgpu.NVB0CC_CTRL_CMD_GET_CHIPLET_HS_CREDIT_POOL] = simpleIoctlInfo("NVB0CC_CTRL_CMD_GET_CHIPLET_HS_CREDIT_POOL", "NVB0CC_CTRL_GET_CHIPLET_HS_CREDIT_POOL")
+				info.ControlInfos[nvgpu.NVB0CC_CTRL_CMD_GET_HS_CREDITS_MAPPING] = simpleIoctlInfo("NVB0CC_CTRL_CMD_GET_HS_CREDITS_MAPPING", "NVB0CC_CTRL_GET_HS_CREDITS_POOL_MAPPING_PARAMS")
 				return info
 			}
 			return abi
