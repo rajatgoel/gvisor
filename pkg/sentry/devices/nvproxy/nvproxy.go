@@ -148,6 +148,33 @@ func Register(vfsObj *vfs.VirtualFilesystem, opts *Options) (*DeviceInfo, error)
 		nvp.devInfo.FabricIMEXManagementDevMinor = opts.HostSettings.FabricIMEXManagementDevMinor
 	}
 
+	// MIG scopes a container to a GPU instance and compute instance by the
+	// /dev/nvidia-caps/nvidia-cap# files it can open. Register every MIG
+	// capability the host advertises; the sandbox can only open the ones whose
+	// device files are created in its /dev, which are the ones the container
+	// was actually given.
+	if len(opts.HostSettings.MIGCaps) != 0 {
+		if nvp.devInfo.CapsDevMajor == 0 {
+			capsDevMajor, err := vfsObj.GetDynamicCharDevMajor()
+			if err != nil {
+				return nil, fmt.Errorf("allocating device major number for nvidia-caps: %w", err)
+			}
+			nvp.devInfo.CapsDevMajor = capsDevMajor
+		}
+		nvp.migCapProcfs = make(map[string]string, len(opts.HostSettings.MIGCaps))
+		for _, migCap := range opts.HostSettings.MIGCaps {
+			if err := vfsObj.RegisterDevice(vfs.CharDevice, nvp.devInfo.CapsDevMajor, migCap.DevMinor, &openOnlyDevice{
+				nvp:     nvp,
+				relpath: fmt.Sprintf("nvidia-caps/nvidia-cap%d", migCap.DevMinor),
+			}, &vfs.RegisterDeviceOptions{
+				GroupName: "nvidia-caps",
+			}); err != nil {
+				return nil, err
+			}
+			nvp.migCapProcfs["capabilities/"+migCap.ProcPath] = procfsCapability(migCap.DevMinor, migCap.Mode)
+		}
+	}
+
 	if imexChannelCount := opts.HostSettings.IMEXChannelCount(); imexChannelCount != 0 {
 		capsIMEXChannelsDevMajor, err := vfsObj.GetDynamicCharDevMajor()
 		if err != nil {
@@ -211,8 +238,11 @@ type nvproxy struct {
 	capsEnabled            nvconf.DriverCaps
 	useDevGofer            bool
 	procDriverNvidiaParams string
-	devInfo                DeviceInfo
-	regularDevs            [nvgpu.NV_MINOR_DEVICE_NUMBER_REGULAR_MAX + 1]*frontendDevice
+	// migCapProcfs maps paths relative to /proc/driver/nvidia/ to the contents
+	// of the MIG capability files at those paths.
+	migCapProcfs map[string]string
+	devInfo      DeviceInfo
+	regularDevs  [nvgpu.NV_MINOR_DEVICE_NUMBER_REGULAR_MAX + 1]*frontendDevice
 
 	fdsMu       fdsMutex `state:"nosave"`
 	frontendFDs map[*frontendFD]struct{}

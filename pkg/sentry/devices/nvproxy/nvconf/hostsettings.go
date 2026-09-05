@@ -17,8 +17,10 @@ package nvconf
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"gvisor.dev/gvisor/pkg/log"
 )
@@ -34,6 +36,24 @@ type HostSettings struct {
 	// /proc/driver/nvidia/capabilities/fabric-imex-mgmt.
 	HaveFabricIMEXManagement     bool
 	FabricIMEXManagementDevMinor uint32
+
+	// MIGCaps are the MIG capabilities advertised under
+	// /proc/driver/nvidia/capabilities/gpu#/mig/.
+	MIGCaps []MIGCap
+}
+
+// MIGCap describes one MIG capability advertised by the host driver.
+type MIGCap struct {
+	// ProcPath is the capability's path relative to
+	// /proc/driver/nvidia/capabilities/, e.g. "gpu0/mig/gi3/access".
+	ProcPath string
+
+	// DevMinor is DeviceFileMinor, the minor number of the corresponding
+	// /dev/nvidia-caps/nvidia-cap# file.
+	DevMinor uint32
+
+	// Mode is DeviceFileMode.
+	Mode uint32
 }
 
 // HostSettingsOptions holds arguments to GetHostSettings.
@@ -42,6 +62,9 @@ type HostSettingsOptions struct {
 	// HaveFabricIMEXManagement and FabricIMEXManagementDevMinor are set in the
 	// returned HostSettings.
 	WantFabricIMEXManagement bool
+
+	// If WantMIGCaps is true, populate MIGCaps in the returned HostSettings.
+	WantMIGCaps bool
 }
 
 // GetHostSettings returns HostSettings.
@@ -71,7 +94,99 @@ func GetHostSettings(opts HostSettingsOptions) (*HostSettings, error) {
 		settings.FabricIMEXManagementDevMinor = uint32(minor)
 	}
 
+	if opts.WantMIGCaps {
+		migCaps, err := getMIGCaps()
+		if err != nil {
+			return nil, err
+		}
+		settings.MIGCaps = migCaps
+	}
+
 	return settings, nil
+}
+
+const procDriverNvidiaCapabilities = "/proc/driver/nvidia/capabilities"
+
+var capFileRegexp = regexp.MustCompile(`DeviceFileMinor: (\d+)\nDeviceFileMode: (\d+)`)
+
+// getMIGCaps returns the MIG GPU instance and compute instance capabilities
+// advertised by the host driver. MIG scopes a container to a GPU instance by
+// the /dev/nvidia-caps/nvidia-cap# files it can open, and libnvidia-container
+// maps instances to minor numbers through this procfs tree; see
+// nvidia-container-toolkit's internal/info/proc/devices and
+// libnvidia-container's src/nvcap.c.
+func getMIGCaps() ([]MIGCap, error) {
+	// The tree only exists when at least one GPU has MIG enabled.
+	giPaths, err := filepath.Glob(procDriverNvidiaCapabilities + "/gpu*/mig/gi*/access")
+	if err != nil {
+		return nil, err
+	}
+	ciPaths, err := filepath.Glob(procDriverNvidiaCapabilities + "/gpu*/mig/gi*/ci*/access")
+	if err != nil {
+		return nil, err
+	}
+	var caps []MIGCap
+	for _, path := range append(giPaths, ciPaths...) {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			// The tree changes as instances are created and destroyed, so a
+			// file disappearing between the glob and the read is expected.
+			log.Warningf("Failed to read %s: %v", path, err)
+			continue
+		}
+		m := capFileRegexp.FindSubmatch(contents)
+		if m == nil {
+			return nil, fmt.Errorf("failed to parse %s", path)
+		}
+		minor, err := strconv.ParseUint(string(m[1]), 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse DeviceFileMinor in %s: %w", path, err)
+		}
+		mode, err := strconv.ParseUint(string(m[2]), 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse DeviceFileMode in %s: %w", path, err)
+		}
+		caps = append(caps, MIGCap{
+			ProcPath: strings.TrimPrefix(path, procDriverNvidiaCapabilities+"/"),
+			DevMinor: uint32(minor),
+			Mode:     uint32(mode),
+		})
+	}
+	return caps, nil
+}
+
+// EncodeMIGCaps serializes caps for transport to the sentry as a flag value.
+func EncodeMIGCaps(caps []MIGCap) string {
+	entries := make([]string, 0, len(caps))
+	for _, c := range caps {
+		entries = append(entries, fmt.Sprintf("%s:%d:%d", c.ProcPath, c.DevMinor, c.Mode))
+	}
+	return strings.Join(entries, ",")
+}
+
+// DecodeMIGCaps is the inverse of EncodeMIGCaps.
+func DecodeMIGCaps(str string) ([]MIGCap, error) {
+	if str == "" {
+		return nil, nil
+	}
+	entries := strings.Split(str, ",")
+	caps := make([]MIGCap, 0, len(entries))
+	for _, entry := range entries {
+		fields := strings.Split(entry, ":")
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("invalid MIG capability %q", entry)
+		}
+		minor, err := strconv.ParseUint(fields[1], 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid minor in MIG capability %q: %w", entry, err)
+		}
+		mode, err := strconv.ParseUint(fields[2], 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid mode in MIG capability %q: %w", entry, err)
+		}
+		caps = append(caps, MIGCap{ProcPath: fields[0], DevMinor: uint32(minor), Mode: uint32(mode)})
+	}
+	return caps, nil
 }
 
 // IMEXChannelCount returns the number of IMEX channels indicated by

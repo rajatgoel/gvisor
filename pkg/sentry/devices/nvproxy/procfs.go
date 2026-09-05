@@ -40,6 +40,9 @@ func ProcfsInfoFromVFS(vfsObj *vfs.VirtualFilesystem) *ProcfsInfo {
 			"params": nvp.procDriverNvidiaParams,
 		},
 	}
+	for path, contents := range nvp.migCapProcfs {
+		procfsInfo.StaticFiles[path] = contents
+	}
 	if nvp.devInfo.HaveFabricIMEXManagement {
 		procfsInfo.StaticFiles["capabilities/fabric-imex-mgmt"] = procfsCapability(nvp.devInfo.FabricIMEXManagementDevMinor, 0o400)
 	}
