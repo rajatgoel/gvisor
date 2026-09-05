@@ -155,12 +155,11 @@ func ParseNvidiaVisibleDevices(spec *specs.Spec, conf *config.Config) (string, e
 	}
 
 	for _, gpuDev := range strings.Split(nvd, ",") {
-		// Validate gpuDev. We only support the following formats for now:
+		// Validate gpuDev. We support the following formats:
 		// * GPU indices (e.g. 0,1,2)
 		// * GPU UUIDs (e.g. GPU-fef8089b)
-		//
-		// We do not support MIG devices yet.
-		if strings.HasPrefix(gpuDev, "GPU-") {
+		// * MIG device UUIDs (e.g. MIG-6c04ac2c)
+		if strings.HasPrefix(gpuDev, "GPU-") || strings.HasPrefix(gpuDev, "MIG-") {
 			continue
 		}
 		_, err := strconv.ParseUint(gpuDev, 10, 32)

@@ -1873,7 +1873,9 @@ func createDeviceFiles(ctx context.Context, creds *auth.Credentials, info *conta
 			{Path: "/dev/nvidia-uvm", Type: "c", Major: int64(info.nvproxyDevInfo.UVMDevMajor), Minor: nvgpu.NVIDIA_UVM_PRIMARY_MINOR_NUMBER},
 		}
 		// There is no nvidia-container-cli flag to enable fabric-imex-mgmt, so
-		// we never create a /dev/nvidia-caps/nvidia-cap# file for it here.
+		// we never create a /dev/nvidia-caps/nvidia-cap# file for it here. MIG
+		// capability files are handled below, since nvidia-container-cli does
+		// create those.
 		devClient := devutil.GoferClientFromContext(ctx)
 		if devClient == nil {
 			return fmt.Errorf("dev gofer client not found in context")
@@ -1896,6 +1898,26 @@ func createDeviceFiles(ctx context.Context, creds *auth.Credentials, info *conta
 				return fmt.Errorf("invalid nvidia regular minor device number %d", minor)
 			}
 			nvidiaDevs = append(nvidiaDevs, specs.LinuxDevice{Path: fmt.Sprintf("/dev/nvidia%d", minor), Type: "c", Major: nvgpu.NV_MAJOR_DEVICE_NUMBER, Minor: int64(minor)})
+		}
+		// A MIG container is scoped to a GPU instance and compute instance by
+		// the /dev/nvidia-caps/nvidia-cap# files nvidia-container-cli gave it,
+		// which live in a subdirectory of /dev. The directory is absent when
+		// no MIG device was requested.
+		capNames, err := devClient.DirentNamesAt(ctx, "nvidia-caps")
+		if err != nil && !linuxerr.Equals(linuxerr.ENOENT, err) {
+			log.Warningf("Failed to list nvidia-caps from dev gofer: %v", err)
+		}
+		nvidiaCapRegex := regexp.MustCompile(`^nvidia-cap(\d+)$`)
+		for _, name := range capNames {
+			ms := nvidiaCapRegex.FindStringSubmatch(name)
+			if ms == nil {
+				continue
+			}
+			minor, err := strconv.ParseUint(ms[1], 10, 32)
+			if err != nil {
+				return fmt.Errorf("invalid nvidia capability device name %q: %w", name, err)
+			}
+			nvidiaDevs = append(nvidiaDevs, specs.LinuxDevice{Path: fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", minor), Type: "c", Major: int64(info.nvproxyDevInfo.CapsDevMajor), Minor: int64(minor)})
 		}
 		for _, nvidiaDev := range nvidiaDevs {
 			if err := createDeviceFile(ctx, creds, info, vfsObj, root, nvidiaDev); err != nil {

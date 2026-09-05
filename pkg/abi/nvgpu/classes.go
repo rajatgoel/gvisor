@@ -101,6 +101,8 @@ const (
 	TURING_A                         = 0x0000c597
 	TURING_DMA_COPY_A                = 0x0000c5b5
 	TURING_COMPUTE_A                 = 0x0000c5c0
+	AMPERE_SMC_PARTITION_REF         = 0x0000c637
+	AMPERE_SMC_EXEC_PARTITION_REF    = 0x0000c638
 	HOPPER_USERMODE_A                = 0x0000c661
 	AMPERE_A                         = 0x0000c697
 	NVC6B0_VIDEO_DECODER             = 0x0000c6b0
@@ -897,4 +899,48 @@ type NVB2CC_ALLOC_PARAMETERS struct {
 	_              structs.HostLayout
 	HClientTarget  Handle
 	HContextTarget Handle
+}
+
+// NVC637_ALLOCATION_PARAMETERS is the alloc param type for
+// AMPERE_SMC_PARTITION_REF, from
+// src/common/sdk/nvidia/inc/class/clc637.h.
+//
+// +marshal
+type NVC637_ALLOCATION_PARAMETERS struct {
+	_             structs.HostLayout
+	CapDescriptor uint64
+	SwizzID       uint32
+	Pad0          uint32
+}
+
+// GetCapDescriptor implements hasCapDescriptor.GetCapDescriptor.
+func (n *NVC637_ALLOCATION_PARAMETERS) GetCapDescriptor() uint64 {
+	return n.CapDescriptor
+}
+
+// SetCapDescriptor implements hasCapDescriptor.SetCapDescriptor.
+func (n *NVC637_ALLOCATION_PARAMETERS) SetCapDescriptor(capDescriptor uint64) {
+	n.CapDescriptor = capDescriptor
+}
+
+// NVC638_ALLOCATION_PARAMETERS is the alloc param type for
+// AMPERE_SMC_EXEC_PARTITION_REF, from
+// src/common/sdk/nvidia/inc/class/clc638.h.
+//
+// +marshal
+type NVC638_ALLOCATION_PARAMETERS struct {
+	_               structs.HostLayout
+	CapDescriptor   uint64
+	ExecPartitionID uint32
+	Pad0            uint32
+}
+
+// GetCapDescriptor implements hasCapDescriptor.GetCapDescriptor.
+func (n *NVC638_ALLOCATION_PARAMETERS) GetCapDescriptor() uint64 {
+	return n.CapDescriptor
+}
+
+// SetCapDescriptor implements hasCapDescriptor.SetCapDescriptor.
+func (n *NVC638_ALLOCATION_PARAMETERS) SetCapDescriptor(capDescriptor uint64) {
+	n.CapDescriptor = capDescriptor
 }
