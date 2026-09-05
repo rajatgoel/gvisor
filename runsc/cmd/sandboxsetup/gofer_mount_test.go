@@ -32,7 +32,10 @@ func TestShouldExposeNvidiaDevice(t *testing.T) {
 		{name: "nvidia-uvm-tools", path: "/dev/nvidia-uvm-tools", want: false},
 		{name: "nvidia-modeset", path: "/dev/nvidia-modeset", want: false},
 		{name: "not nvidia", path: "/dev/sda", want: false},
+		{name: "mig gpu instance cap", path: "/dev/nvidia-caps/nvidia-cap39", want: true},
+		{name: "mig compute instance cap", path: "/dev/nvidia-caps/nvidia-cap40", want: true},
 		{name: "nvidia prefix but not device", path: "/dev/nvidia-cap1", want: false},
+		{name: "imex channel", path: "/dev/nvidia-caps-imex-channels/channel0", want: false},
 		{name: "empty", path: "", want: false},
 	}
 	for _, tst := range tests {

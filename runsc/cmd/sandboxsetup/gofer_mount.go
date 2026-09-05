@@ -487,9 +487,17 @@ func ShouldExposeNvidiaDevice(path string) bool {
 	if path == "/dev/nvidiactl" || path == "/dev/nvidia-uvm" {
 		return true
 	}
+	// MIG scopes a container to a GPU instance and compute instance by the
+	// /dev/nvidia-caps/nvidia-cap# files it is given.
+	if nvidiaCapDevPathReg.MatchString(path) {
+		return true
+	}
 	nvidiaDevPathReg := regexp.MustCompile(`^/dev/nvidia(\d+)$`)
 	return nvidiaDevPathReg.MatchString(path)
 }
+
+// nvidiaCapDevPathReg matches /dev/nvidia-caps/nvidia-cap# device paths.
+var nvidiaCapDevPathReg = regexp.MustCompile(`^/dev/nvidia-caps/nvidia-cap(\d+)$`)
 
 // ShouldExposeVFIODevice returns true if path refers to a VFIO device
 // which should be exposed to the container.

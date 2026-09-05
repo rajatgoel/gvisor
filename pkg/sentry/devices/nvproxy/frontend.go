@@ -1283,6 +1283,57 @@ func rmAllocSimple[Params any, PtrParams marshalPtr[Params]](fi *frontendIoctlSt
 	return rmAllocSimpleParams[Params, PtrParams](fi, ioctlParams, isNVOS64, addSimpleObjDepParentLocked)
 }
 
+// hasCapDescriptor is implemented by alloc param types carrying a
+// capDescriptor.
+type hasCapDescriptor[T any] interface {
+	marshalPtr[T]
+	GetCapDescriptor() uint64
+	SetCapDescriptor(uint64)
+}
+
+// rmAllocSMCRef handles allocation of AMPERE_SMC_PARTITION_REF and
+// AMPERE_SMC_EXEC_PARTITION_REF, which subscribe a client to a MIG GPU
+// instance and compute instance respectively.
+//
+// Both carry a capDescriptor: an fd for the /dev/nvidia-caps/nvidia-cap# file
+// that gates access to the instance, which the driver validates and dups in
+// os-interface.c:osRmCapAcquire(). The application passes an FD in its own
+// table, so it has to be replaced by the corresponding host FD for the
+// duration of the ioctl and restored afterwards, the same way
+// frontendExportToDMABufFD handles dma-buf FDs.
+func rmAllocSMCRef[Params any, PtrParams hasCapDescriptor[Params]](fi *frontendIoctlState, ioctlParams *nvgpu.NVOS64_PARAMETERS, isNVOS64 bool) (uintptr, error) {
+	if ioctlParams.PAllocParms == 0 {
+		return 0, linuxerr.EINVAL
+	}
+	var allocParamsValue Params
+	allocParams := PtrParams(&allocParamsValue)
+	if _, err := allocParams.CopyIn(fi.t, addrFromP64(ioctlParams.PAllocParms)); err != nil {
+		return 0, err
+	}
+
+	appCapDescriptor := allocParams.GetCapDescriptor()
+	fileGeneric, _ := fi.t.FDTable().Get(int32(appCapDescriptor))
+	if fileGeneric == nil {
+		return 0, linuxerr.EINVAL
+	}
+	defer fileGeneric.DecRef(fi.ctx)
+	capFD, ok := fileGeneric.Impl().(*openOnlyFD)
+	if !ok {
+		return 0, linuxerr.EINVAL
+	}
+
+	allocParams.SetCapDescriptor(uint64(capFD.hostFD))
+	n, err := rmAllocInvoke(fi, ioctlParams, allocParams, isNVOS64, addSimpleObjDepParentLocked)
+	allocParams.SetCapDescriptor(appCapDescriptor)
+	if err != nil {
+		return n, err
+	}
+	if _, err := allocParams.CopyOut(fi.t, addrFromP64(ioctlParams.PAllocParms)); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 // addSimpleObjDepParentLocked implements rmAllocInvoke.addObjLocked for
 // classes that require no special handling and depend only on their parents.
 func addSimpleObjDepParentLocked[Params any](fi *frontendIoctlState, client *rootClient, ioctlParams *nvgpu.NVOS64_PARAMETERS, rightsRequested nvgpu.RS_ACCESS_MASK, allocParams *Params) {

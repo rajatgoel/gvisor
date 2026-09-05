@@ -231,6 +231,7 @@ type Boot struct {
 	// particular is uint32 and there is no flag.Uint32Var().
 	procDriverNvidiaParams             string
 	nvidiaFabricIMEXManagementDevMinor int64
+	nvidiaMIGCaps                      string
 
 	// uid and gid are the user and group IDs to switch to after setting up the
 	// user namespace.
@@ -315,6 +316,7 @@ func (b *Boot) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&b.nvidiaDriverVersion, "nvidia-driver-version", "", "Nvidia driver version on the host")
 	f.StringVar(&b.procDriverNvidiaParams, "nvidia-host-params", "", "value of /proc/driver/nvidia/params on the host")
 	f.Int64Var(&b.nvidiaFabricIMEXManagementDevMinor, "nvidia-fabric-imex-mgmt-minor", -1, "DeviceFileMinor in /proc/driver/nvidia/capabilities/fabric-imex-mgmt on the host")
+	f.StringVar(&b.nvidiaMIGCaps, "nvidia-mig-caps", "", "MIG capabilities in /proc/driver/nvidia/capabilities on the host, as path:minor:mode entries separated by commas")
 }
 
 // willReexec returns true if this boot process will re-execute itself to
@@ -427,6 +429,7 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 		driverCaps, driverCapsErr := specutils.NVProxyDriverCapsAllowed(conf)
 		nvhs, err := nvconf.GetHostSettings(nvconf.HostSettingsOptions{
 			WantFabricIMEXManagement: driverCapsErr == nil && driverCaps&nvconf.CapFabricIMEXManagement != 0,
+			WantMIGCaps:              true,
 		})
 		if err != nil {
 			log.Warningf("Failed to get nvconf.HostSettings: %v", err)
@@ -436,6 +439,10 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 			if nvhs.HaveFabricIMEXManagement {
 				b.nvidiaFabricIMEXManagementDevMinor = int64(nvhs.FabricIMEXManagementDevMinor)
 				argOverride["nvidia-fabric-imex-mgmt-minor"] = strconv.FormatUint(uint64(nvhs.FabricIMEXManagementDevMinor), 10)
+			}
+			if len(nvhs.MIGCaps) != 0 {
+				b.nvidiaMIGCaps = nvconf.EncodeMIGCaps(nvhs.MIGCaps)
+				argOverride["nvidia-mig-caps"] = b.nvidiaMIGCaps
 			}
 		}
 	}
@@ -671,6 +678,11 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 		timer.Reached("RDMA snapshot loaded")
 	}
 
+	migCaps, err := nvconf.DecodeMIGCaps(b.nvidiaMIGCaps)
+	if err != nil {
+		util.Fatalf("Failed to parse --nvidia-mig-caps: %v", err)
+	}
+
 	// Create the loader.
 	bootArgs := boot.Args{
 		ID:                  f.Arg(0),
@@ -701,6 +713,7 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomma
 			ProcDriverNvidiaParams:       b.procDriverNvidiaParams,
 			HaveFabricIMEXManagement:     b.nvidiaFabricIMEXManagementDevMinor >= 0,
 			FabricIMEXManagementDevMinor: uint32(b.nvidiaFabricIMEXManagementDevMinor),
+			MIGCaps:                      migCaps,
 		},
 		HostTHP:                  b.hostTHP,
 		SaveFDs:                  b.saveFDs.GetFDs(),
