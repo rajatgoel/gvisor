@@ -101,6 +101,60 @@ func (g *GoferClient) DirentNames(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+// DirentNamesAt returns names of all the dirents for /dev/{relpath} on the
+// gofer.
+func (g *GoferClient) DirentNamesAt(ctx context.Context, relpath string) ([]string, error) {
+	if g.hostFD >= 0 {
+		fd, err := unix.Openat(g.hostFD, relpath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer unix.Close(fd)
+		return fsutil.DirentNames(fd)
+	}
+	client := g.clientFD.Client()
+	pathComponents := make([]string, 0, 1)
+	for pit := fspath.Parse(relpath).Begin; pit.Ok(); pit = pit.Next() {
+		pathComponents = append(pathComponents, pit.String())
+	}
+	status, inodes, err := g.clientFD.WalkMultiple(ctx, pathComponents)
+	if err != nil {
+		return nil, err
+	}
+	if status != lisafs.WalkSuccess || len(inodes) != len(pathComponents) {
+		for i := range inodes {
+			client.CloseFD(ctx, inodes[i].ControlFD, false /* flush */)
+		}
+		return nil, linuxerr.ENOENT
+	}
+	for i := 0; i < len(inodes)-1; i++ {
+		client.CloseFD(ctx, inodes[i].ControlFD, false /* flush */)
+	}
+	dirFD := client.NewFD(inodes[len(inodes)-1].ControlFD)
+	defer client.CloseFD(ctx, dirFD.ID(), true /* flush */)
+	openFDID, _, err := dirFD.OpenAt(ctx, unix.O_RDONLY)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %q from gofer: %v", relpath, err)
+	}
+	defer client.CloseFD(ctx, openFDID, true /* flush */)
+	openFD := client.NewFD(openFDID)
+	const count = int32(64 * 1024)
+	var names []string
+	for {
+		dirents, err := openFD.Getdents64(ctx, count)
+		if err != nil {
+			return nil, fmt.Errorf("Getdents64 RPC failed: %v", err)
+		}
+		if len(dirents) == 0 {
+			break
+		}
+		for i := range dirents {
+			names = append(names, string(dirents[i].Name))
+		}
+	}
+	return names, nil
+}
+
 // OpenAt opens the device file at /dev/{relpath} on the gofer.
 func (g *GoferClient) OpenAt(ctx context.Context, relpath string, flags uint32) (int, error) {
 	flags &= unix.O_ACCMODE
