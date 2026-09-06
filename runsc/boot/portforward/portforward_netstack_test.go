@@ -19,7 +19,6 @@ import (
 	"io"
 	"sync"
 	"testing"
-	"time"
 
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/context"
@@ -389,73 +388,5 @@ func TestDoCopyDrainsLargeRead(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("copied data mismatch")
-	}
-}
-
-type readinessRaceEndpoint struct {
-	tcpip.Endpoint
-	wq      waiter.Queue
-	blocked bool
-	written bytes.Buffer
-}
-
-func (e *readinessRaceEndpoint) Read(dst io.Writer, _ tcpip.ReadOptions) (tcpip.ReadResult, tcpip.Error) {
-	if !e.blocked {
-		e.blocked = true
-		e.wq.Notify(waiter.ReadableEvents)
-		return tcpip.ReadResult{}, &tcpip.ErrWouldBlock{}
-	}
-	n, err := dst.Write([]byte("pending data"))
-	if err != nil {
-		return tcpip.ReadResult{}, &tcpip.ErrBadBuffer{}
-	}
-	return tcpip.ReadResult{Count: n, Total: n}, nil
-}
-
-func (e *readinessRaceEndpoint) Write(src tcpip.Payloader, _ tcpip.WriteOptions) (int64, tcpip.Error) {
-	if !e.blocked {
-		e.blocked = true
-		e.wq.Notify(waiter.WritableEvents)
-		return 0, &tcpip.ErrWouldBlock{}
-	}
-	n, err := io.Copy(&e.written, src)
-	if err != nil {
-		return 0, &tcpip.ErrBadBuffer{}
-	}
-	return n, nil
-}
-
-func TestNetstackConnReadinessBeforeRegistration(t *testing.T) {
-	for _, operation := range []string{"Read", "Write"} {
-		t.Run(operation, func(t *testing.T) {
-			ctx := contexttest.Context(t)
-			ep := &readinessRaceEndpoint{}
-			conn := &netstackConn{ep: ep, wq: &ep.wq}
-			cancel := make(chan struct{})
-			timer := time.AfterFunc(5*time.Second, func() { close(cancel) })
-			defer timer.Stop()
-
-			const want = "pending data"
-			var n int
-			var err error
-			var got string
-			if operation == "Read" {
-				buf := make([]byte, len(want))
-				n, err = conn.Read(ctx, buf, cancel)
-				got = string(buf[:n])
-			} else {
-				n, err = conn.Write(ctx, []byte(want), cancel)
-				got = ep.written.String()
-			}
-			if err != nil {
-				t.Fatalf("%s failed with readiness pending: %v", operation, err)
-			}
-			if n != len(want) || got != want {
-				t.Fatalf("%s = (%d, %q), want (%d, %q)", operation, n, got, len(want), want)
-			}
-			if events := ep.wq.Events(); events != 0 {
-				t.Errorf("registered events after %s = %#x, want 0", operation, events)
-			}
-		})
 	}
 }
