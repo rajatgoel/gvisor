@@ -18,6 +18,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +26,51 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 )
+
+func TestTarXattrRoundTrip(t *testing.T) {
+	want := map[string]string{
+		"user.text":           "hello",
+		"user.empty":          "",
+		"user.binary":         "\x00\xff\x80\n=",
+		"user.\xff":           "non-UTF8 name",
+		"security.capability": "\x01\x00\x00\x02\x00\x20\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+	}
+	d := dentry{inode: &inode{impl: &directory{}}}
+	d.inode.xattrs.SetRawXattrs(want)
+	hdr, err := d.createTarHeader("./", make(map[uint64]string), tarDefaultWriterCallbacks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hdr, err = tar.NewReader(&buf).Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored inode
+	restored.setXattrsFromPAXRecords(hdr)
+	if got := restored.xattrs.RawXattrs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("restored xattrs = %q, want %q", got, want)
+	}
+}
+
+func TestTarRejectsUnrepresentableXattrNames(t *testing.T) {
+	for _, name := range []string{"", "user.a=b", "user.a\x00b"} {
+		t.Run(name, func(t *testing.T) {
+			d := dentry{inode: &inode{impl: &directory{}}}
+			d.inode.xattrs.SetRawXattrs(map[string]string{name: "value"})
+			if _, err := d.createTarHeader("./", make(map[uint64]string), tarDefaultWriterCallbacks{}); err == nil {
+				t.Fatal("silently accepted an unrepresentable xattr name")
+			}
+		})
+	}
+}
 
 // TestSourceTarLongSymlinkRelease is a regression test for a bug where
 // symlinkFromTar did not call fs.accountPages(1) for symlinks whose target

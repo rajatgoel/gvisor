@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
@@ -476,19 +475,11 @@ func (d *dentry) createTarHeader(path string, inoToPath map[uint64]string, cb ta
 	if xattrs := d.inode.xattrs.RawXattrs(); len(xattrs) > 0 {
 		header.PAXRecords = make(map[string]string, len(xattrs))
 		for k, v := range xattrs {
-			// PaxRecords require that key and value are non-empty UTF-8 strings and
-			// that the key does not contain '='.
-			if strings.Contains(k, "=") {
-				log.Warningf("Skipping xattr (k=%q, v=%q) for file %q while generating tar archive because key contains '='", k, v, path)
-				continue
-			}
-			if k == "" || v == "" {
-				log.Warningf("Skipping xattr (k=%q, v=%q) for file %q while generating tar archive because key or value is empty", k, v, path)
-				continue
-			}
-			if !utf8.ValidString(k) || !utf8.ValidString(v) {
-				log.Warningf("Skipping xattr (k=%q, v=%q) for file %q while generating tar archive because value is not a valid UTF-8 string", k, v, path)
-				continue
+			// archive/tar preserves arbitrary bytes, including empty values, in
+			// SCHILY.xattr PAX records. Reject unrepresentable names instead of
+			// silently losing metadata (e.g. file capabilities) in a checkpoint.
+			if k == "" || strings.ContainsAny(k, "=\x00") {
+				return nil, fmt.Errorf("xattr name %q for %q cannot be represented in a PAX record", k, path)
 			}
 			header.PAXRecords[paxXattrPrefix+k] = v
 		}
