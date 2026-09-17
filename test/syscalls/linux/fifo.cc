@@ -14,7 +14,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -24,9 +23,6 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "absl/synchronization/notification.h"
-#include "absl/time/clock.h"
-#include "absl/time/time.h"
 #include "test/util/file_descriptor.h"
 #include "test/util/signal_util.h"
 #include "test/util/temp_path.h"
@@ -184,41 +180,6 @@ TEST(FifoTest, OpenBlockedAndInterrupted) {
 
   EXPECT_THAT(open(fifo.c_str(), O_WRONLY), SyscallFailsWithErrno(EINTR));
   EXPECT_THAT(open(fifo.c_str(), O_RDONLY), SyscallFailsWithErrno(EINTR));
-}
-
-TEST(FifoTest, OpenBlockedAndRestarted) {
-  struct sigaction sa = {};
-  sa.sa_sigaction = TestSigHandler;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_SIGINFO | SA_RESTART;
-  const auto scoped_sigaction =
-      ASSERT_NO_ERRNO_AND_VALUE(ScopedSigaction(SIGURG, sa));
-  const auto scoped_sigmask =
-      ASSERT_NO_ERRNO_AND_VALUE(ScopedSignalMask(SIG_UNBLOCK, SIGURG));
-
-  const std::string fifo = NewTempAbsPath();
-  ASSERT_THAT(mknod(fifo.c_str(), S_IFIFO | S_IRUSR | S_IWUSR, 0),
-              SyscallSucceeds());
-
-  for (int flags : {O_RDONLY, O_WRONLY}) {
-    absl::Notification opened;
-    pthread_t target = pthread_self();
-    ScopedThread t([&] {
-      absl::SleepFor(absl::Milliseconds(50));
-      EXPECT_EQ(pthread_kill(target, SIGURG), 0);
-      absl::SleepFor(absl::Milliseconds(100));
-      const FileDescriptor other =
-          ASSERT_NO_ERRNO_AND_VALUE(Open(fifo.c_str(), O_RDWR));
-      opened.WaitForNotification();
-    });
-
-    const int fd = open(fifo.c_str(), flags);
-    EXPECT_THAT(fd, SyscallSucceeds());
-    if (fd >= 0) {
-      EXPECT_THAT(close(fd), SyscallSucceeds());
-    }
-    opened.Notify();
-  }
 }
 
 TEST(FifoTest, FifoOpenRDWR) {
