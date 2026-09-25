@@ -2056,6 +2056,32 @@ func (c *sandboxNetstackCreator) CreateStack() (inet.Stack, error) {
 	return s, nil
 }
 
+// RestoreStack implements inet.NetworkStackRestorer.RestoreStack.
+func (c *sandboxNetstackCreator) RestoreStack(st inet.Stack) error {
+	s, ok := st.(*netstack.Stack)
+	if !ok {
+		return fmt.Errorf("unexpected network stack type %T", st)
+	}
+	s.Stack.ResetConfig()
+	s.Stack.SetAllowLiveTCPMigration(c.allowLiveTCPMigration)
+	s.Stack.SetIPTables(netfilter.DefaultLinuxTables(s.Stack.Clock(), s.Stack.InsecureRNG()))
+	if nftables.IsNFTablesEnabled() {
+		s.Stack.SetNFTables(nftables.NewNFTables(s.Stack, s.Stack.Clock(), s.Stack.SecureRNG()))
+	}
+
+	n := &Network{Stack: s.Stack}
+	nicID := s.Stack.NextNICID()
+	if nicID != linux.LOOPBACK_IFINDEX {
+		return fmt.Errorf("loopback device should always have index %d, got %d", linux.LOOPBACK_IFINDEX, nicID)
+	}
+	link := DefaultLoopbackLink
+	opts := stack.NICOptions{
+		Name:               link.Name,
+		DeliverLinkPackets: true,
+	}
+	return n.createNICWithAddrs(nicID, ethernet.New(loopback.New()), opts, link.Addresses)
+}
+
 // signal sends a signal to one or more processes in a container. If PID is 0,
 // then the container init process is used. Depending on the SignalDeliveryMode
 // option, the signal may be sent directly to the indicated process, to all

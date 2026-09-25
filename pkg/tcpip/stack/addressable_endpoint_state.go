@@ -15,6 +15,8 @@
 package stack
 
 import (
+	"context"
+
 	"fmt"
 
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -67,6 +69,13 @@ func (a *AddressableEndpointState) Init(networkEndpoint NetworkEndpoint, options
 	a.networkEndpoint = networkEndpoint
 	a.options = options
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.endpoints = make(map[tcpip.Address]*addressState)
+}
+
+// afterLoad is invoked by stateify.
+func (a *AddressableEndpointState) afterLoad(context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.endpoints = make(map[tcpip.Address]*addressState)

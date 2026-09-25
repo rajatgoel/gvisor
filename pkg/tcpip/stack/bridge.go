@@ -32,6 +32,8 @@ type bridgePort struct {
 type BridgeFDBKey tcpip.LinkAddress
 
 // BridgeFDBEntry consists of all metadata for a FDB record.
+//
+// +stateify savable
 type BridgeFDBEntry struct {
 	port *bridgePort
 }
@@ -295,6 +297,24 @@ func (b *BridgeEndpoint) addFDBEntryLocked(addr tcpip.LinkAddress, source *bridg
 		port: source,
 	}
 	return true
+}
+
+// delPortsExcept removes the ports whose NICs are not in keep, along with
+// their FDB entries, without reattaching those NICs.
+func (b *BridgeEndpoint) delPortsExcept(keep map[tcpip.NICID]*nic) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, port := range b.ports {
+		if keep[id] == port.nic {
+			continue
+		}
+		for k, e := range b.fdbTable {
+			if e.port == port {
+				delete(b.fdbTable, k)
+			}
+		}
+		delete(b.ports, id)
+	}
 }
 
 // FindFDBEntry find the FDB entry for the given address. If it doesn't exist,

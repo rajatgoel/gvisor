@@ -264,6 +264,12 @@ func (e *Endpoint) Restore(s *stack.Stack) {
 			return
 		}
 		e.state.Store(e.origEndpointState)
+		if e.snd != nil {
+			e.snd.gso = e.gso.Type != stack.GSONone
+			if e.snd.gso {
+				e.gso.MSS = uint16(e.snd.MaxPayloadSize)
+			}
+		}
 		log.Infof("connect success: %+v", e.TransportEndpointInfo.ID)
 		// For FIN-WAIT-2 and TIME-WAIT we need to start the appropriate timers so
 		// that the socket is closed correctly.

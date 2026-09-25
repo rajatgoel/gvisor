@@ -197,6 +197,21 @@ type Stack struct {
 	// when resume is false.
 	removeConf bool `state:"nosave"`
 
+	// retainedNICs are sandbox-created virtual NICs (veth, bridge) captured
+	// at save time and reinstated by ResetConfig on restore.
+	retainedNICs map[tcpip.NICID]*nic
+
+	// retainedRoutes are the routes via retainedNICs, reinstated by Restore.
+	retainedRoutes []tcpip.Route
+
+	// retainedAddrs are the static addresses of retainedNICs, reinstated by
+	// ResetConfig.
+	retainedAddrs map[tcpip.NICID][]retainedAddress
+
+	// retainedPorts maps the names of host-provided NICs to the retained
+	// bridges they were attached to, reattached by Restore.
+	retainedPorts map[string]tcpip.NICID
+
 	// allowLiveTCPMigration allows TCP connection state to be migrated.
 	// If false, any connected TCP endpoints will be terminated
 	// during save/restore.
@@ -495,11 +510,18 @@ func New(opts Options) *Stack {
 
 // NextNICID allocates the next available NIC ID and returns it.
 func (s *Stack) NextNICID() tcpip.NICID {
-	next := s.nicIDGen.Add(1)
-	if next < 0 {
-		panic("NICID overflow")
+	for {
+		next := s.nicIDGen.Add(1)
+		if next < 0 {
+			panic("NICID overflow")
+		}
+		s.mu.RLock()
+		_, used := s.nics[tcpip.NICID(next)]
+		s.mu.RUnlock()
+		if !used {
+			return tcpip.NICID(next)
+		}
 	}
-	return tcpip.NICID(next)
 }
 
 // SetNetworkProtocolOption allows configuring individual protocol level
@@ -2138,10 +2160,37 @@ func (s *Stack) getNICs() map[tcpip.NICID]*nic {
 func (s *Stack) ResetConfig() {
 	nics := make(map[tcpip.NICID]*nic)
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	for id, n := range s.retainedNICs {
+		nics[id] = n
+	}
+	retained := s.retainedNICs
+	addrs := s.retainedAddrs
+	s.retainedNICs = nil
+	s.retainedAddrs = nil
 	s.nics = nics
 	s.loopbackNIC = nil
 	s.nicIDGen.Store(0)
+	s.mu.Unlock()
+
+	for id, n := range retained {
+		if b, ok := n.NetworkLinkEndpoint.(*BridgeEndpoint); ok {
+			b.delPortsExcept(retained)
+		}
+		if err := n.resetNetworkEndpoints(); err != nil {
+			panic(fmt.Sprintf("resetting network endpoints of NIC %d: %s", id, err))
+		}
+		for _, a := range addrs[id] {
+			if err := n.addAddress(a.Addr, AddressProperties{
+				ConfigType: AddressConfigStatic,
+				Lifetimes:  AddressLifetimes{Deprecated: a.Deprecated},
+				Temporary:  a.Temporary,
+			}); err != nil {
+				if _, ok := err.(*tcpip.ErrDuplicateAddress); !ok {
+					panic(fmt.Sprintf("restoring address %v on NIC %d: %s", a.Addr, id, err))
+				}
+			}
+		}
+	}
 }
 
 // ReplaceConfig replaces config in the loaded stack.
@@ -2169,13 +2218,36 @@ func (s *Stack) ReplaceConfig(st *Stack) {
 		} else if s.externalNetworkingDisabled {
 			nic.disable()
 		}
-		_ = s.NextNICID()
+		s.nicIDGen.Add(1)
 	}
 }
 
 // Restore restarts the stack after a restore. This must be called after the
 // entire system has been restored.
 func (s *Stack) Restore() {
+	s.mu.Lock()
+	routes := s.retainedRoutes
+	ports := s.retainedPorts
+	s.retainedRoutes = nil
+	s.retainedPorts = nil
+	var portIDs []tcpip.NICID
+	var masters []tcpip.NICID
+	for id, n := range s.nics {
+		if mid, ok := ports[n.Name()]; ok {
+			portIDs = append(portIDs, id)
+			masters = append(masters, mid)
+		}
+	}
+	s.mu.Unlock()
+	for i, id := range portIDs {
+		if err := s.SetNICCoordinator(id, masters[i]); err != nil {
+			panic(fmt.Sprintf("reattaching NIC %d to bridge %d: %s", id, masters[i], err))
+		}
+	}
+	for _, r := range routes {
+		s.AddRoute(r)
+	}
+
 	// RestoredEndpoint.Restore() may call other methods on s, so we can't hold
 	// s.mu while restoring the endpoints.
 	s.mu.Lock()
@@ -2626,6 +2698,7 @@ func (s *Stack) SetNICStack(id tcpip.NICID, peer *Stack) (tcpip.NICID, tcpip.Err
 
 	linkEp := nic.NetworkLinkEndpoint.(LinkEndpoint)
 	name := nic.Name()
+	kind := nic.kind
 
 	deferAct, err := s.removeNICLocked(id, false /* closeLinkEndpoint */)
 	s.mu.Unlock()
@@ -2637,7 +2710,7 @@ func (s *Stack) SetNICStack(id tcpip.NICID, peer *Stack) (tcpip.NICID, tcpip.Err
 	}
 
 	id = tcpip.NICID(peer.NextNICID())
-	return id, peer.CreateNICWithOptions(id, linkEp, NICOptions{Name: name})
+	return id, peer.CreateNICWithOptions(id, linkEp, NICOptions{Name: name, Kind: kind})
 }
 
 // SetRemoveConf sets the removeConf in stack to the given value.

@@ -15,6 +15,8 @@
 package inet
 
 import (
+	"gvisor.dev/gvisor/pkg/sync"
+
 	goContext "context"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
@@ -152,6 +154,13 @@ func (n *Namespace) init() {
 		return
 	}
 	if n.creator != nil {
+		if _, ok := n.creator.(NetworkStackRestorer); ok && n.stack != nil {
+			restoredNamespacesMu.Lock()
+			restoredNamespaces = append(restoredNamespaces, n)
+			restoredNamespacesMu.Unlock()
+			n.abstractSockets.init()
+			return
+		}
 		var err error
 		n.stack, err = n.creator.CreateStack()
 		if err != nil {
@@ -183,6 +192,45 @@ func (n *Namespace) NetlinkMcastTable() *McastTable {
 func (n *Namespace) HasCapability(ctx context.Context, cp linux.Capability) bool {
 	creds := auth.CredentialsFromContext(ctx)
 	return creds.HasCapabilityIn(cp, n.userNS)
+}
+
+// NetworkStackRestorer is implemented by a NetworkStackCreator that can
+// reinitialize a saved non-root network stack after restore, instead of
+// replacing it with a new empty stack.
+type NetworkStackRestorer interface {
+	// RestoreStack reinstates the configuration of a loaded stack.
+	RestoreStack(Stack) error
+}
+
+var (
+	restoredNamespacesMu sync.Mutex
+	restoredNamespaces   []*Namespace
+)
+
+// RestoreNamespaceStacks reinstates the configuration of the saved stacks of
+// the non-root network namespaces loaded by the current restore, and starts
+// restoring their endpoints. The returned function waits for the endpoint
+// restores; it must be called after the root stack has been restored, since
+// all stacks wait for every restored endpoint.
+func RestoreNamespaceStacks() (func(), error) {
+	restoredNamespacesMu.Lock()
+	nss := restoredNamespaces
+	restoredNamespaces = nil
+	restoredNamespacesMu.Unlock()
+	for _, n := range nss {
+		if err := n.creator.(NetworkStackRestorer).RestoreStack(n.stack); err != nil {
+			return nil, err
+		}
+	}
+	var wg sync.WaitGroup
+	for _, n := range nss {
+		wg.Add(1)
+		go func(st Stack) {
+			defer wg.Done()
+			st.Restore()
+		}(n.stack)
+	}
+	return wg.Wait, nil
 }
 
 // NetworkStackCreator allows new instances of a network stack to be created. It

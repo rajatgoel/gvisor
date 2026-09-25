@@ -20,21 +20,51 @@ import (
 	"math/rand"
 
 	cryptorand "gvisor.dev/gvisor/pkg/rand"
+	"gvisor.dev/gvisor/pkg/tcpip"
 )
 
 // beforeSave is invoked by stateify.
 func (s *Stack) beforeSave() {
-	// removeConf will be set only in case of save/restore.
 	s.mu.Lock()
+	s.retainedNICs = make(map[tcpip.NICID]*nic)
+	for id, n := range s.nics {
+		if n.retainedAcrossRestore() {
+			s.retainedNICs[id] = n
+		}
+	}
+	s.retainedAddrs = make(map[tcpip.NICID][]retainedAddress)
+	for id, n := range s.retainedNICs {
+		s.retainedAddrs[id] = n.staticAddresses()
+	}
+	s.retainedPorts = make(map[string]tcpip.NICID)
+	for _, n := range s.nics {
+		if _, ok := s.retainedNICs[n.id]; ok || n.Primary == nil {
+			continue
+		}
+		if _, ok := s.retainedNICs[n.Primary.id]; ok {
+			s.retainedPorts[n.Name()] = n.Primary.id
+		}
+	}
+	s.retainedRoutes = nil
+	for _, r := range s.GetRouteTable() {
+		if _, ok := s.retainedNICs[r.NIC]; ok {
+			s.retainedRoutes = append(s.retainedRoutes, r)
+		}
+	}
+
+	// removeConf will be set only in case of save/restore.
 	if !s.removeConf {
 		s.mu.Unlock()
 		return
 	}
 
-	// Remove all the NICs and routes from the stack as they will be
-	// created again during restore based on the new network config.
+	// Remove all the host-backed NICs and routes from the stack as they will
+	// be created again during restore based on the new network config.
 	deferActs := make([]func(), 0)
 	for id := range s.nics {
+		if _, ok := s.retainedNICs[id]; ok {
+			continue
+		}
 		act, _ := s.removeNICLocked(id, true /* closeLinkEndpoint */)
 		if act != nil {
 			deferActs = append(deferActs, act)

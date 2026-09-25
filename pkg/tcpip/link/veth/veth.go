@@ -16,6 +16,8 @@
 package veth
 
 import (
+	"context"
+
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -116,14 +118,28 @@ func NewPair(mtu, backlogQueueSize uint32) (*Endpoint, *Endpoint) {
 	b.peer = a
 	a.veth = &veth
 	b.veth = &veth
-	go func() {
-		for t := range veth.backlogQueue {
-			t.e.InjectInbound(t.protocol, t.pkt)
-			t.pkt.DecRef()
-		}
-
-	}()
+	go veth.deliverBacklog(veth.backlogQueue)
 	return a, b
+}
+
+func (v *veth) deliverBacklog(q chan vethPacket) {
+	for t := range q {
+		t.e.InjectInbound(t.protocol, t.pkt)
+		t.pkt.DecRef()
+	}
+}
+
+// afterLoad is invoked by stateify.
+func (v *veth) afterLoad(context.Context) {
+	v.backlogQueue = make(chan vethPacket, DefaultBacklogSize)
+	v.mu.RLock()
+	closed := v.closed
+	v.mu.RUnlock()
+	if closed {
+		close(v.backlogQueue)
+		return
+	}
+	go v.deliverBacklog(v.backlogQueue)
 }
 
 // Close closes e. Further packet injections will return an error, and all pending

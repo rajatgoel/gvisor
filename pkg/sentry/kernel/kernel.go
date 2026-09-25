@@ -1074,7 +1074,12 @@ func (k *Kernel) LoadFrom(ctx context.Context, r io.Reader, asyncMFLoader *Async
 		if err := networkArgs.ConfigureNetwork(s); err != nil {
 			return fmt.Errorf("configuring network: %w", err)
 		}
+		waitNamespaces, err := inet.RestoreNamespaceStacks()
+		if err != nil {
+			return fmt.Errorf("restoring network namespace stacks: %w", err)
+		}
 		s.Restore()
+		waitNamespaces()
 		timeline.Reached("Network stack restored")
 	}
 

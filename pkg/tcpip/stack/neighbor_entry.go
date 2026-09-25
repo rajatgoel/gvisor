@@ -15,6 +15,8 @@
 package stack
 
 import (
+	"context"
+
 	"fmt"
 	"time"
 
@@ -124,6 +126,22 @@ type neighborEntry struct {
 	nudState *NUDState
 
 	mu neighborEntryMu
+}
+
+// afterLoad is invoked by stateify.
+//
+// The entry's timer is not saved, so states driven by a timer are demoted to
+// ones that re-validate the neighbor on next use.
+func (e *neighborEntry) afterLoad(context.Context) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch e.mu.neigh.State {
+	case Reachable, Delay, Probe:
+		e.mu.neigh.State = Stale
+	case Incomplete:
+		e.mu.neigh.State = Unknown
+	}
+	e.mu.timer = timer{}
 }
 
 // newNeighborEntry creates a neighbor cache entry starting at the default

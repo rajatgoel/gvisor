@@ -198,31 +198,85 @@ func newNIC(stack *Stack, id tcpip.NICID, ep LinkEndpoint, opts NICOptions) *nic
 		experimentIPOptionEnabled: opts.EnableExperimentIPOption,
 		kind:                      opts.Kind,
 	}
-	nic.linkResQueue.init(nic)
+	nic.initNetworkEndpoints()
+	nic.NetworkLinkEndpoint.Attach(nic)
 
-	resolutionRequired := ep.Capabilities()&CapabilityResolutionRequired != 0
+	return nic
+}
 
-	for _, netProto := range stack.networkProtocols {
+func (n *nic) initNetworkEndpoints() {
+	n.linkResQueue.init(n)
+
+	resolutionRequired := n.NetworkLinkEndpoint.Capabilities()&CapabilityResolutionRequired != 0
+
+	for _, netProto := range n.stack.networkProtocols {
 		netNum := netProto.Number()
-		netEP := netProto.NewEndpoint(nic, nic)
-		nic.networkEndpoints[netNum] = netEP
+		netEP := netProto.NewEndpoint(n, n)
+		n.networkEndpoints[netNum] = netEP
 
 		if resolutionRequired {
 			if r, ok := netEP.(LinkAddressResolver); ok {
 				l := &linkResolver{resolver: r}
-				l.neigh.init(nic, r)
-				nic.linkAddrResolvers[r.LinkAddressProtocol()] = l
+				l.neigh.init(n, r)
+				n.linkAddrResolvers[r.LinkAddressProtocol()] = l
 			}
 		}
 
 		if d, ok := netEP.(DuplicateAddressDetector); ok {
-			nic.duplicateAddressDetectors[d.DuplicateAddressProtocol()] = d
+			n.duplicateAddressDetectors[d.DuplicateAddressProtocol()] = d
 		}
 	}
+}
 
-	nic.NetworkLinkEndpoint.Attach(nic)
+// resetNetworkEndpoints replaces the network endpoints of a restored NIC
+// with new ones, discarding dynamic protocol state (neighbors, DAD, NDP,
+// multicast membership) whose timers are not saved.
+func (n *nic) resetNetworkEndpoints() tcpip.Error {
+	n.networkEndpoints = make(map[tcpip.NetworkProtocolNumber]NetworkEndpoint)
+	n.linkAddrResolvers = make(map[tcpip.NetworkProtocolNumber]*linkResolver)
+	n.duplicateAddressDetectors = make(map[tcpip.NetworkProtocolNumber]DuplicateAddressDetector)
+	n.initNetworkEndpoints()
+	if !n.enabled.Swap(false) {
+		return nil
+	}
+	return n.enable()
+}
 
-	return nic
+// retainedAddress is a static address of a retained NIC.
+//
+// +stateify savable
+type retainedAddress struct {
+	Addr       tcpip.ProtocolAddress
+	Deprecated bool
+	Temporary  bool
+}
+
+// staticAddresses returns the statically configured permanent addresses of
+// n. Addresses added by the network protocols themselves (e.g. SLAAC, the
+// IPv4 broadcast address) are regenerated after restore.
+func (n *nic) staticAddresses() []retainedAddress {
+	var addrs []retainedAddress
+	for p, ep := range n.networkEndpoints {
+		addressableEndpoint, ok := ep.(AddressableEndpoint)
+		if !ok {
+			continue
+		}
+		for _, a := range addressableEndpoint.PermanentAddresses() {
+			if p == header.IPv4ProtocolNumber && a.Address == header.IPv4Broadcast {
+				continue
+			}
+			addrEP := addressableEndpoint.AcquireAssignedAddress(a.Address, false /* allowTemp */, NeverPrimaryEndpoint, true /* readOnly */)
+			if addrEP == nil || addrEP.ConfigType() != AddressConfigStatic {
+				continue
+			}
+			addrs = append(addrs, retainedAddress{
+				Addr:       tcpip.ProtocolAddress{Protocol: p, AddressWithPrefix: a},
+				Deprecated: addrEP.Deprecated(),
+				Temporary:  addrEP.Temporary(),
+			})
+		}
+	}
+	return addrs
 }
 
 func (n *nic) getNetworkEndpoint(proto tcpip.NetworkProtocolNumber) NetworkEndpoint {
@@ -360,6 +414,12 @@ func (n *nic) Promiscuous() bool {
 }
 
 // IsLoopback implements NetworkInterface.
+// retainedAcrossRestore returns whether n is a sandbox-created virtual NIC
+// whose state is saved and reinstated on restore.
+func (n *nic) retainedAcrossRestore() bool {
+	return n.kind == "veth" || n.kind == "bridge"
+}
+
 func (n *nic) IsLoopback() bool {
 	return n.NetworkLinkEndpoint.Capabilities()&CapabilityLoopback != 0
 }
